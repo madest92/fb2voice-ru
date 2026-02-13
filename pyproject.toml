@@ -1,0 +1,35 @@
+[project]
+name = "fb2voice-ru"
+version = "0.1.0"
+description = "Convert FB2 e-books to MP3 audiobooks using Silero TTS"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [{name = "Kliachin Aleksei", email = "madest92@gmail.com"}]
+
+dependencies = [
+    "lxml>=6.0.0",
+    "mutagen>=1.45.0",
+    "num2words>=0.5.14",
+    "scipy>=1.17.0",
+    "soundfile>=0.13.0",
+    "tqdm>=4.67.0",
+]
+
+[project.optional-dependencies]
+torch = [
+    "torch>=2.10.0"
+]
+
+[project.scripts]
+fb2voice-ru = "fb2voice_ru.main:main"
+
+[tool.setuptools]
+packages = ["fb2voice_ru"]
+package-dir = {"" = "src"}
+
+[project.urls]
+Homepage = "https://github.com/madest92/fb2voice-ru"
+Documentation = "https://github.com/madest92/fb2voice-ru#readme"
+Repository = "https://github.com/madest92/fb2voice-ru.git"
+Issues = "https://github.com/madest92/fb2voice-ru/issues"

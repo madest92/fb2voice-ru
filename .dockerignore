@@ -1,0 +1,5 @@
+**/__pycache__/
+**/audiobooks/
+**.egg-info/
+**.fb2
+**.pt

@@ -1,0 +1,11 @@
+__pycache__/
+.venv/
+audiobooks/
+build/
+*.egg-info/
+*.fb2
+*.pt
+# IDE
+.vscode/
+.idea/
+.DS_Store
