@@ -14,7 +14,6 @@
 ## Требования
 
 - Python 3.8+
-- ffmpeg (для конвертации WAV → MP3)
 - CUDA (опционально, для ускорения обработки на GPU)
 
 ## Установка
@@ -31,36 +30,6 @@ pip install -e .
 pip install -e .[torch]
 # Или если только с CPU без GPU
 pip install -e .[torch] --index-url https://download.pytorch.org/whl/cpu
-```
-
-#### Установка ffmpeg
-
-**Linux (Ubuntu/Debian):**
-
-```bash
-sudo apt-get install ffmpeg
-```
-
-**Linux (Fedora/CentOS):**
-
-```bash
-sudo dnf install ffmpeg
-```
-
-**macOS:**
-
-```bash
-brew install ffmpeg
-```
-
-**Windows:**
-
-```bash
-# Через scoop
-scoop install ffmpeg
-
-# Или через chocolatey
-choco install ffmpeg
 ```
 
 ### Запуск в Docker

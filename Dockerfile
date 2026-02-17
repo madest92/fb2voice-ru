@@ -3,11 +3,7 @@ FROM python:3.13-slim
 ARG TORCH_CPU
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PIP_NO_CACHE_DIR=1
 
-RUN apt-get update \
-    && apt-get install -y --no-install-suggests --no-install-recommends ffmpeg \
-    && rm -rf /var/lib/apt/lists/* \
-    && groupadd -g 1000 fb2voice \
-    && useradd -m -u 1000 -g 1000 fb2voice
+RUN groupadd -g 1000 fb2voice && useradd -m -u 1000 -g 1000 fb2voice
 
 USER fb2voice
 ENV PATH="/home/fb2voice/.local/bin:$PATH"

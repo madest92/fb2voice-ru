@@ -1,6 +1,6 @@
 [project]
 name = "fb2voice-ru"
-version = "0.1.0"
+version = "0.2.0"
 description = "Convert FB2 e-books to MP3 audiobooks using Silero TTS"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -11,14 +11,15 @@ dependencies = [
     "lxml>=6.0.0",
     "mutagen>=1.45.0",
     "num2words>=0.5.14",
-    "scipy>=1.17.0",
+    "scipy>=1.17.0", # needs for torch
     "soundfile>=0.13.0",
     "tqdm>=4.67.0",
 ]
 
 [project.optional-dependencies]
 torch = [
-    "torch>=2.10.0"
+    "torch>=2.10.0",
+    "torchaudio>=2.10.0"
 ]
 
 [project.scripts]

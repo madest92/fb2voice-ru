@@ -7,15 +7,14 @@ and create MP3 audiobooks with metadata.
 import logging
 import os
 import re
-import subprocess
 import threading
 import warnings
 from multiprocessing import Manager, Pool, cpu_count
 from typing import Dict, List, Optional, Tuple
 
-import numpy as np
 import soundfile as sf
 import torch
+import torchaudio
 from mutagen.id3 import APIC, ID3, TALB, TIT2, TPE1
 from num2words import num2words
 from tqdm import tqdm
@@ -79,7 +78,9 @@ class Book2Voice:
     LATIN_TEXT_RE = re.compile(r'\b[A-Za-z]+\b')
 
     # Audio parameters
-    SAMPLE_RATE = 48000
+    _resampler = None
+    SAMPLE_TTS_RATE = 48000
+    SAMPLE_AUDIO_RATE = 22050
     PAUSE_DIALOG = 0.6       # Pause for dialogue (seconds)
     PAUSE_PARAGRAPH = 0.8    # Pause between paragraphs
     PAUSE_CHAPTER = 2.0      # Pause between chapters
@@ -103,6 +104,9 @@ class Book2Voice:
     def gen(self, speaker: str = "eugene", output_dir: str = "") -> None:
         """Generate audiobook from FB2 file."""
         self._load_tts_model()
+        Book2Voice._resampler = torchaudio.transforms.Resample(
+            self.SAMPLE_TTS_RATE, self.SAMPLE_AUDIO_RATE
+        )
 
         # Prepare output directory
         authors = ", ".join(self.get_authors()) or "Unknown Author"
@@ -281,36 +285,6 @@ class Book2Voice:
         return model
 
     @staticmethod
-    def _wav_to_mp3(wav_path: str) -> str:
-        """Convert WAV to MP3."""
-        mp3_path = wav_path[:-4] + ".mp3"
-        logger.debug(f"Converting WAV to MP3: '{wav_path}'")
-        try:
-            subprocess.run(
-                [
-                    "ffmpeg", "-y", "-loglevel", "error",
-                    "-i", wav_path,
-                    "-ac", "1",
-                    "-ar", "22050",
-                    "-b:a", "64k",
-                    mp3_path,
-                ],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                check=True,
-            )
-        except subprocess.CalledProcessError:
-            logger.error(f"Failed to convert {wav_path} to MP3")
-            raise
-        except FileNotFoundError:
-            logger.error("ffmpeg not found. Please install ffmpeg first.")
-            raise
-
-        os.remove(wav_path)
-        return mp3_path
-
-    @staticmethod
     def _write_id3(mp3_path: str, title: str, author: str, book_title: str,
                    cover: Optional[Dict]) -> None:
         """Write ID3 metadata to MP3 file."""
@@ -402,6 +376,16 @@ class Book2Voice:
         return str(total)
 
     @staticmethod
+    def _normalize_audio(audio):
+        """
+        Normalize audio to prevent clipping and ensure consistent volume.
+        """
+        audio = Book2Voice._resampler(audio)
+        audio = torch.clamp(audio, -0.98, 0.98)
+
+        return audio.cpu().numpy()
+
+    @staticmethod
     def _normalize_text(text: str) -> str:
         """Normalize text before speech synthesis."""
         text = text.strip()
@@ -459,32 +443,35 @@ class Book2Voice:
             '_',
             f"{idx:02d} - {chapter}"
         )
-        chapter_path = os.path.join(out_dir, chapter_save + ".wav")
+        chapter_path = os.path.join(out_dir, chapter_save + ".mp3")
 
         try:
             with sf.SoundFile(
-                chapter_path, 'w',
-                Book2Voice.SAMPLE_RATE, 1,
-                subtype='PCM_16'
+                chapter_path,
+                mode='w',
+                samplerate=Book2Voice.SAMPLE_AUDIO_RATE,
+                channels=1,
+                subtype="MPEG_LAYER_III",
+                format='MP3',
+                compression_level=0.6,
             ) as out_f:
-
-                # Initial chapter pause
                 with torch.inference_mode():
                     audio = model.apply_tts(
                         text=Book2Voice._normalize_text(chapter),
                         speaker=speaker,
-                        sample_rate=Book2Voice.SAMPLE_RATE,
+                        sample_rate=Book2Voice.SAMPLE_TTS_RATE,
                         put_accent=True,
                         put_yo=True,
                         put_stress_homo=True,
                         put_yo_homo=True,
                     )
-                    out_f.write(audio)
+                audio = Book2Voice._normalize_audio(audio)
+                out_f.write(audio)
                 pause_samples = int(
-                    Book2Voice.PAUSE_PARAGRAPH * Book2Voice.SAMPLE_RATE
+                    Book2Voice.PAUSE_PARAGRAPH * Book2Voice.SAMPLE_AUDIO_RATE
                 )
                 out_f.write(
-                    np.zeros(pause_samples, dtype='float32')
+                    torch.zeros(pause_samples)
                 )
 
                 batch = 0
@@ -495,12 +482,8 @@ class Book2Voice:
                             paragraph[0].startswith(("—", "–", "-")))
                         else Book2Voice.PAUSE_PARAGRAPH
                     )
-
                     out_f.write(
-                        np.zeros(
-                            int(pause * Book2Voice.SAMPLE_RATE),
-                            dtype='float32'
-                        )
+                        torch.zeros(int(pause * Book2Voice.SAMPLE_AUDIO_RATE))
                     )
 
                     for chunk in paragraph:
@@ -508,13 +491,13 @@ class Book2Voice:
                             audio = model.apply_tts(
                                 text=Book2Voice._normalize_text(chunk),
                                 speaker=speaker,
-                                sample_rate=Book2Voice.SAMPLE_RATE,
+                                sample_rate=Book2Voice.SAMPLE_TTS_RATE,
                                 put_accent=True,
                                 put_yo=True,
                                 put_stress_homo=True,
                                 put_yo_homo=True,
                             )
-
+                        audio = Book2Voice._normalize_audio(audio)
                         out_f.write(audio)
 
                         batch += 1
@@ -525,13 +508,12 @@ class Book2Voice:
                 if batch:
                     progress_q.put(batch)
 
-            mp3_path = Book2Voice._wav_to_mp3(chapter_path)
             Book2Voice._write_id3(
-                mp3_path, chapter_save, author, book_title, cover
+                chapter_path, chapter_save, author, book_title, cover
             )
 
         except Exception as e:
             logger.error(f"Error generating audio for chapter {idx}: {e}")
             raise
 
-        return mp3_path
+        return chapter_path
