@@ -1,9 +1,13 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "fb2voice-ru"
-version = "0.2.0"
+version = "0.3.0"
 description = "Convert FB2 e-books to MP3 audiobooks using Silero TTS"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [{name = "Kliachin Aleksei", email = "madest92@gmail.com"}]
 
@@ -11,6 +15,7 @@ dependencies = [
     "lxml>=6.0.0",
     "mutagen>=1.45.0",
     "num2words>=0.5.14",
+    "silero-stress>=1.4.0",
     "scipy>=1.17.0", # needs for torch
     "soundfile>=0.13.0",
     "tqdm>=4.67.0",
@@ -25,9 +30,8 @@ torch = [
 [project.scripts]
 fb2voice-ru = "fb2voice_ru.main:main"
 
-[tool.setuptools]
-packages = ["fb2voice_ru"]
-package-dir = {"" = "src"}
+[tool.hatch.build.targets.wheel]
+packages = ["src/fb2voice_ru"]
 
 [project.urls]
 Homepage = "https://github.com/madest92/fb2voice-ru"

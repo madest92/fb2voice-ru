@@ -5,6 +5,7 @@ build/
 *.egg-info/
 *.fb2
 *.pt
+!src/fb2voice_ru/data/sample.fb2
 # IDE
 .vscode/
 .idea/

@@ -16,8 +16,9 @@ import soundfile as sf
 import torch
 import torchaudio
 from mutagen.id3 import APIC, ID3, TALB, TIT2, TPE1
-from num2words import num2words
 from tqdm import tqdm
+
+from fb2voice_ru.normalizer import Normalizer
 
 from .fb2 import FB2Parser
 
@@ -47,35 +48,23 @@ class Book2Voice:
     # ================== CONSTANTS ==================
 
     # Silero TTS model URL
-    MODEL_URL = 'https://models.silero.ai/models/tts/ru/v5_1_ru.pt'
-    MODEL_PATH = torch.hub.get_dir() + '/.silero_ru_v5_1.pt'
-
-    # Regular expressions for text normalization
-    NUMBER_RE = re.compile(r"\d+")
-    FLOAT_RE = re.compile(r"(\d+)[\.,](\d+)")
-    NUMBER_SIGN_RE = re.compile(r"№\s*(\d+)")
-    ROMAN_RE = re.compile(
-        r"\b(?=[MDCLXVI]+\b)"
-        r"(CM|CD|D?C{0,3})"
-        r"(XC|XL|L?X{0,3})"
-        r"(IX|IV|V?I{0,3})\b",
-        re.IGNORECASE
-    )
-    PERCENT_RE = re.compile(r"(\d+)\s*%")
-    SPACE_RE = re.compile(r"\s+")
-
-    # Abbreviations to expand
-    ABBREVIATIONS = [
-        (re.compile(r"\bт\.к\.", re.IGNORECASE), "так как"),
-        (re.compile(r"\bт\.е\.", re.IGNORECASE), "то есть"),
-        (re.compile(r"\bт\.д\.", re.IGNORECASE), "так далее"),
-        (re.compile(r"\bт\.п\.", re.IGNORECASE), "тому подобное"),
-        (re.compile(r"\bдр\.", re.IGNORECASE), "другие"),
-        (re.compile(r"\bгг\.", re.IGNORECASE), "годы"),
-    ]
+    SILERO_MODEL_URL = 'https://models.silero.ai/models/tts/ru'
+    SILERO_MODELS = {
+        'v5_1_ru.pt': ['aidar', 'baya', 'eugene', 'kseniya', 'xenia'],
+        'v5_cis_base_v1.pt': [
+            "ru_aigul", "ru_albina", "ru_alexandr", "ru_alfia",
+            "ru_alfia2", "ru_bogdan", "ru_dmitriy", "ru_ekaterina",
+            "ru_vika", "ru_gamat", "ru_igor", "ru_karina",
+            "ru_kejilgan", "ru_kermen", "ru_marat", "ru_miyau",
+            "ru_nurgul", "ru_oksana", "ru_onaoy", "ru_ramilia",
+            "ru_roman", "ru_safarhuja", "ru_saida", "ru_sibday",
+            "ru_zara", "ru_zhadyra", "ru_zhazira", "ru_zinaida",
+            "ru_eduard",
+        ],
+    }
+    MODEL_PATH = torch.hub.get_dir()
 
     SENTENCE_RE = re.compile(r'(?<=[.!?…])\s+')
-    LATIN_TEXT_RE = re.compile(r'\b[A-Za-z]+\b')
 
     # Audio parameters
     _resampler = None
@@ -93,7 +82,6 @@ class Book2Voice:
         self.path = fb2_path
         self._parser = FB2Parser(fb2_path)
         self._book = self._parser.get_book()
-        self._tts_model = None
 
     def __getattr__(self, name):
         """Delegate attribute access to FB2Parser instance."""
@@ -101,9 +89,30 @@ class Book2Voice:
 
     # ================== PUBLIC ==================
 
+    @staticmethod
+    def list_speakers() -> List[str]:
+        """List available speakers from Silero TTS models."""
+        speakers = []
+        for model_speakers in Book2Voice.SILERO_MODELS.values():
+            speakers.extend(model_speakers)
+        return speakers
+
+    @staticmethod
+    def get_speaker_model(speaker: str) -> Optional[str]:
+        """Get model name for a given speaker."""
+        for model_name, speakers in Book2Voice.SILERO_MODELS.items():
+            if speaker in speakers:
+                return model_name
+        return None
+
     def gen(self, speaker: str = "eugene", output_dir: str = "") -> None:
         """Generate audiobook from FB2 file."""
-        self._load_tts_model()
+        model_name = self.get_speaker_model(speaker)
+        if not model_name:
+            speakers = "\n" + "\n".join(self.list_speakers())
+            raise ValueError(f"Speaker '{speaker}' not found in: {speakers}")
+        self._load_tts_model(model_name)
+
         Book2Voice._resampler = torchaudio.transforms.Resample(
             self.SAMPLE_TTS_RATE, self.SAMPLE_AUDIO_RATE
         )
@@ -163,6 +172,7 @@ class Book2Voice:
                         paragraphs,
                         base,
                         speaker,
+                        model_name,
                     )
                 )
                 idx_chapter += 1
@@ -243,41 +253,26 @@ class Book2Voice:
 
         return chunks
 
-    def _load_tts_model(self) -> None:
+    def _load_tts_model(self, name: str) -> None:
         """Load TTS model if not already loaded."""
-        if self._tts_model is not None:
+        model_filepath = os.path.join(self.MODEL_PATH, name)
+        model_url = self.SILERO_MODEL_URL + "/" + name
+        if os.path.isfile(model_filepath):
             return
-
-        if not os.path.isfile(self.MODEL_PATH):
-            logger.info(f"Downloading TTS model from {self.MODEL_URL}...")
-            try:
-                os.makedirs(os.path.dirname(self.MODEL_PATH), exist_ok=True)
-                torch.hub.download_url_to_file(self.MODEL_URL, self.MODEL_PATH)
-                logger.info("Model downloaded successfully")
-            except Exception as e:
-                logger.error(f"Failed to download model: {e}")
-                raise
-
-        logger.info("Loading TTS model...")
+        logger.info(f"Downloading TTS model from {model_url}...")
         try:
-            self._tts_model = torch.package.PackageImporter(
-                self.MODEL_PATH
-            ).load_pickle("tts_models", "model")
-
-            device = torch.device(
-                'cuda' if torch.cuda.is_available() else 'cpu'
-            )
-            self._tts_model.to(device)
-            logger.info(f"Model loaded on {device}")
+            os.makedirs(os.path.dirname(self.MODEL_PATH), exist_ok=True)
+            torch.hub.download_url_to_file(model_url, model_filepath)
+            logger.info("Model downloaded successfully")
         except Exception as e:
-            logger.error(f"Failed to load model: {e}")
+            logger.error(f"Failed to download model: {e}")
             raise
 
     @staticmethod
-    def _get_tts_model():
+    def _get_tts_model(name: str) -> torch.nn.Module:
         """Load TTS model for static method use."""
         model = torch.package.PackageImporter(
-            Book2Voice.MODEL_PATH
+            os.path.join(Book2Voice.MODEL_PATH, name)
         ).load_pickle("tts_models", "model")
 
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -318,64 +313,6 @@ class Book2Voice:
             pbar.update(msg)
 
     @staticmethod
-    def _phonetic_word(word: str) -> str:
-        """Convert Latin word to Russian phonetic transcription."""
-        combo_rules = sorted([
-            ("sch", "ш"), ("sh", "ш"), ("ch", "ч"), ("zh", "ж"),
-            ("ph", "ф"), ("th", "т"), ("qu", "кв"), ("ck", "к"),
-            ("ng", "нг"), ("ts", "ц"), ("tz", "ц"), ("ya", "я"),
-            ("yo", "ё"), ("yu", "ю"), ("ye", "е"),
-        ], key=lambda x: -len(x[0]))
-        letter_map = {
-            "a": "а", "b": "б", "c": "к", "d": "д", "e": "е",
-            "f": "ф", "g": "г", "h": "х", "i": "и", "j": "дж",
-            "k": "к", "l": "л", "m": "м", "n": "н", "o": "о",
-            "p": "п", "q": "к", "r": "р", "s": "с", "t": "т",
-            "u": "у", "v": "в", "w": "в", "x": "кс", "y": "й",
-            "z": "з",
-        }
-        word = word.lower()
-        i = 0
-        result = []
-
-        while i < len(word):
-            matched = False
-            for pattern, repl in combo_rules:
-                if word.startswith(pattern, i):
-                    result.append(repl)
-                    i += len(pattern)
-                    matched = True
-                    break
-            if not matched:
-                result.append(letter_map.get(word[i], word[i]))
-                i += 1
-
-        phonetic = ''.join(result)
-        logger.debug(f"Converted Latin word '{word}' to phonetic '{phonetic}'")
-        return phonetic
-
-    @staticmethod
-    def _roman_to_int(roman: str) -> str:
-        """Convert Roman number to Arabic number."""
-        roman_map = {
-            "I": 1, "V": 5, "X": 10, "L": 50,
-            "C": 100, "D": 500, "M": 1000,
-        }
-        total = 0
-        prev = 0
-
-        for ch in reversed(roman.upper()):
-            value = roman_map[ch]
-            if value < prev:
-                total -= value
-            else:
-                total += value
-                prev = value
-
-        logger.debug(f"Converting Roman number '{roman}' to Arabic '{total}'")
-        return str(total)
-
-    @staticmethod
     def _normalize_audio(audio):
         """
         Normalize audio to prevent clipping and ensure consistent volume.
@@ -384,37 +321,6 @@ class Book2Voice:
         audio = torch.clamp(audio, -0.98, 0.98)
 
         return audio.cpu().numpy()
-
-    @staticmethod
-    def _normalize_text(text: str) -> str:
-        """Normalize text before speech synthesis."""
-        text = text.strip()
-        text = text.replace("—", " — ")
-        text = Book2Voice.ROMAN_RE.sub(
-            lambda m: Book2Voice._roman_to_int(m.group(0)), text
-        )
-        text = Book2Voice.LATIN_TEXT_RE.sub(
-            lambda m: Book2Voice._phonetic_word(m.group(0)), text
-        )
-        text = Book2Voice.NUMBER_SIGN_RE.sub(r"номер \1", text)
-        text = Book2Voice.PERCENT_RE.sub(r"\1 процентов", text)
-
-        for pattern, replacement in Book2Voice.ABBREVIATIONS:
-            text = pattern.sub(replacement, text)
-
-        text = Book2Voice.FLOAT_RE.sub(
-            lambda m: f"{num2words(int(m.group(1)), lang='ru')} и "
-                      f"{num2words(int(m.group(2)), lang='ru')}",
-            text,
-        )
-        text = Book2Voice.NUMBER_RE.sub(
-            lambda m: num2words(int(m.group()), lang="ru"),
-            text,
-        )
-
-        text = Book2Voice.SPACE_RE.sub(" ", text).strip()
-
-        return text
 
     @staticmethod
     def _generate_chapter_audio(args: Tuple) -> str:
@@ -432,10 +338,12 @@ class Book2Voice:
             paragraphs,
             out_dir,
             speaker,
+            model_name,
         ) = args
 
         logger.info(f"Generating audio for chapter '{chapter}'")
-        model = Book2Voice._get_tts_model()
+        model = Book2Voice._get_tts_model(model_name)
+        normalizer = Normalizer()
 
         # Prepare output WAV path
         chapter_save = re.sub(
@@ -455,15 +363,17 @@ class Book2Voice:
                 format='MP3',
                 compression_level=0.6,
             ) as out_f:
+                title = (
+                    f"Вы слушаете аудиокнигу '{book_title}'... "
+                    f"Автор {author}... {chapter}"
+                    if idx == 1
+                    else chapter
+                )
                 with torch.inference_mode():
                     audio = model.apply_tts(
-                        text=Book2Voice._normalize_text(chapter),
+                        text=normalizer.normalize_text(title),
                         speaker=speaker,
                         sample_rate=Book2Voice.SAMPLE_TTS_RATE,
-                        put_accent=True,
-                        put_yo=True,
-                        put_stress_homo=True,
-                        put_yo_homo=True,
                     )
                 audio = Book2Voice._normalize_audio(audio)
                 out_f.write(audio)
@@ -489,13 +399,9 @@ class Book2Voice:
                     for chunk in paragraph:
                         with torch.inference_mode():
                             audio = model.apply_tts(
-                                text=Book2Voice._normalize_text(chunk),
+                                text=normalizer.normalize_text(chunk),
                                 speaker=speaker,
                                 sample_rate=Book2Voice.SAMPLE_TTS_RATE,
-                                put_accent=True,
-                                put_yo=True,
-                                put_stress_homo=True,
-                                put_yo_homo=True,
                             )
                         audio = Book2Voice._normalize_audio(audio)
                         out_f.write(audio)
